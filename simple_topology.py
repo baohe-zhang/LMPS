@@ -6,6 +6,7 @@ from mininet.link import TCLink
 from mininet.util import dumpNodeConnections
 from mininet.log import setLogLevel
 from mininet.cli import CLI
+from mininet.node import RemoteController, CPULimitedHost
 
 from sys import argv
 
