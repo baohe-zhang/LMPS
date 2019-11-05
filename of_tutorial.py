@@ -178,6 +178,18 @@ class LearningSwitch (object):
         self.resend_packet(packet_in, of.OFPP_FLOOD)
         print("FLOODING")
 
+  def _handle_BarrierIn (self, event):
+    global start_time, receive_time_1, receive_time_2, send_time_1, send_time_2, src_dpid, dst_dpid, T1, T2
+
+    #print("Handle timestamp %f" % receive_time)
+    if event.connection.dpid == dst_dpid :
+        receive_time_2 = time.time() * 1000
+        T2 = (receive_time_2 - send_time_2) / 2
+        print("Get the T2 RTT %f ms" % T2)
+    elif event.connection.dpid == src_dpid :
+        receive_time_1 = time.time() * 1000
+        T1 = (receive_time_1 - send_time_1) / 2
+        print("Get the T1 RTT %f ms" % T1)
 
   def _handle_PacketIn (self, event):
     """
@@ -210,13 +222,14 @@ def s2_timer_handler() :
     global start_time, send_time_1, send_time_2, src_dpid, dst_dpid, PROBE_TYPE
     send_time_2 = time.time() * 1000
     print("Send to S2:", send_time_2)
-    core.openflow.getConnection(dst_dpid).send(of.ofp_stats_request(body=of.ofp_desc_stats_request()))
+    xid = of.generate_xid()
+    core.openflow.getConnection(dst_dpid).send(of.ofp_barrier_request())
 
 def s1_timer_handler() :
     global start_time, send_time_1, send_time_2, src_dpid, dst_dpid, PROBE_TYPE
     send_time_1 = time.time() * 1000
     print("Send to S1:", send_time_1)
-    core.openflow.getConnection(src_dpid).send(of.ofp_stats_request(body=of.ofp_desc_stats_request()))
+    core.openflow.getConnection(src_dpid).send(of.ofp_barrier_request())
 
 
 def timer_handler() :
@@ -224,15 +237,33 @@ def timer_handler() :
     probe.ts = time.time() * 1000
     eth = ethernet()
     eth.src = EthAddr("06:12:3d:5d:ae:0c")
-    eth.dst = EthAddr("8e:df:69:ff:97:c2")
+    eth.dst = EthAddr("11:11:11:11:11:11")
     eth.type = PROBE_TYPE
     eth.set_payload(probe)
     msg = of.ofp_packet_out()
     msg.data = eth.pack()
     msg.actions.append(of.ofp_action_output(port=2))
     core.openflow.getConnection(src_dpid).send(msg)
+
+
+def probe_flowmod_msg(output_port) :
+    fm = of.ofp_flow_mod()
+    fm.idle_timeout = 0
+    fm.hard_timeout = 0
+    fm.match.dl_type = PROBE_TYPE
+    fm.match.dl_dst = EthAddr("11:11:11:11:11:11")
+    fm.actions.append(of.ofp_action_output(port=output_port))
+    return fm
  
 
+def setup_probe_connectivity() :
+    # Having the overall topology discovered
+    # discover(start, end)
+    path = [(src_dpid, -1, 2), (dst_dpid, 2, of.OFPP_CONTROLLER)]
+    for sw, s, d in path :
+        fm = probe_flowmod_msg(d)
+        core.openflow.getConnection(sw).send(fm)
+  
 def launch ():
     """
     Starts the component
@@ -249,13 +280,15 @@ def launch ():
                 dst_dpid = event.connection.dpid
         # When the two switch connection up, starting timer
         if src_dpid != 0 and dst_dpid != 0 :
+            setup_probe_connectivity()
+            time.sleep(2)
             probe_timer = Timer(1, timer_handler, recurring = True)
             probe_timer.start()
             time.sleep(2)
-            s1_timer = Timer(1, s1_timer_handler, recurring = True)
+            s1_timer = Timer(0.25, s1_timer_handler, recurring = True)
             s1_timer.start()
             time.sleep(2)
-            s2_timer = Timer(1, s2_timer_handler, recurring = True)
+            s2_timer = Timer(0.25, s2_timer_handler, recurring = True)
             s2_timer.start()
 
     def stop_switch (event):
