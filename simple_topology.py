@@ -27,8 +27,10 @@ class SimpleTopo(Topo):
 
 
 def main():
+	c = RemoteController('c0', '127.0.0.1', 6633)
+
 	topo = SimpleTopo()
-	net = Mininet(topo=topo, link=TCLink, autoStaticArp=True)
+	net = Mininet(topo=topo, host=CPULimitedHost, link=TCLink, autoStaticArp=True, controller=c)
 	net.start()
 
 	dumpNodeConnections(net.hosts)
