@@ -1,29 +1,39 @@
-from collections import defaultdict
+# Copyright 2012 James McCauley
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""
+This component is for use with the OpenFlow tutorial.
+
+It acts as a simple hub, but can be modified to act like an L2
+learning switch.
+
+It's roughly similar to the one Brandon Heller did for NOX.
+"""
+
 from pox.core import core
 import pox.openflow.libopenflow_01 as of
-from pox.lib.revent import *
+from pox.lib.util import dpidToStr
 from pox.lib.recoco import Timer
-from pox.lib.util import dpid_to_str
-from pox.openflow.discovery import Discovery
 import time, struct
 from pox.lib.packet.packet_base import packet_base
 from pox.lib.packet.packet_utils import *
 from pox.lib.packet import ethernet
 from pox.lib.addresses import IPAddr, EthAddr
-
+from pox.misc.topo_discovery import switches, TopoDiscoveryController, get_paths
 
 log = core.getLogger()
 
-# [dpid] -> Switch
-switches = {} 
-
-# ethaddr -> (switch, port)
-mac_map = {}
-
-# Adjacency map.  [sw1][sw2] -> port from sw1 to sw2
-adjacency = defaultdict(lambda: defaultdict(lambda: None))
-
-# Probe packet related
 probe_timer = None
 
 src_dpid = 0
@@ -38,121 +48,7 @@ T1 = 0.0
 T2 = 0.0
 PROBE_TYPE = 0x8888
 
-def get_paths(src, dst):
-    visited = set()
-    path = []
-    paths = []
-    get_paths_helper(None, src, dst, visited, path, paths)
-
-    return paths
-
-def get_paths_helper(pre, cur, dst, visited, path, paths):
-    visited.add(cur)
-    if pre is not None:
-        path.append((pre.dpid, adjacency[pre][cur]))
-
-    if cur == None:
-        log.info(path)
-        paths.append(path[:])
-    elif cur == dst:
-        get_paths_helper(cur, None, dst, visited, path)
-    else:
-        for next_hop, port in adjacency[cur].iteritems():
-            if next_hop not in visited:
-                if port is None:
-                    continue
-                get_paths_helper(cur, next_hop, dst, visited, path)
-
-    if path:
-        path.pop()
-
-    visited.remove(cur)
-
-
-class Switch(EventMixin):
-    def __init__(self):
-        self.connection = None
-        self.ports = None
-        self.dpid = None
-        self._listeners = None
-        self._connected_at = None
-
-    def __repr__(self):
-        return dpid_to_str(self.dpid)
-
-    def disconnect(self):
-        if self.connection is not None:
-            self.connection.removeListeners(self._listeners)
-            self.connection = None
-            self._listeners = None
-
-    def connect(self, connection):
-        if self.dpid is None:
-            self.dpid = connection.dpid
-
-        if self.ports is None:
-            self.ports = connection.features.ports
-
-        self.disconnect()
-
-        log.info('Connect %s' % (connection))
-        self.connection = connection
-        self._listeners = self.listenTo(connection)
-        self._connected_at = time.time()
-
-    def _handle_ConnectionDown(self, event):
-        self.disconnect()
-
-    def resend_packet (self, packet_in, out_port):
-        msg = of.ofp_packet_out()
-        msg.data = packet_in
-        msg.in_port = packet_in.in_port
-
-        # Add an action to send to the specified port
-        action = of.ofp_action_output(port = out_port)
-        msg.actions.append(action)
-
-        # Send message to switch
-        self.connection.send(msg)
-
-
-
-class TopoDiscoveryController(EventMixin):
-	def __init__(self):
-		core.listen_to_dependencies(self, listen_args={'openflow':{'priority':0}})
-
-	def _handle_openflow_discovery_LinkEvent(self, event):
-		log.info('Handle link event')
-
-		def flip(link):
-			return Discovery.Link(link[2],link[3], link[0],link[1])
-
-		l = event.link
-		sw1 = switches[l.dpid1]
-		sw2 = switches[l.dpid2]
-
-		if event.removed:
-			# TODO: handle link remove event
-			pass
-		else:
-			if adjacency[sw1][sw2] is None:
-				if flip(l) in core.openflow_discovery.adjacency:
-					log.info('Add Link')
-					adjacency[sw1][sw2] = l.port1
-					adjacency[sw2][sw1] = l.port2
-
-	def _handle_openflow_ConnectionUp(self, event):
-		log.info('Handle connection up')
-
-		sw = switches.get(event.dpid)
-		if sw is None:
-			# New switch
-			sw = Switch()
-			switches[event.dpid] = sw
-			sw.connect(event.connection)
-		else:
-			sw.connect(event.connection)
-
+paths = []
 
 class probe_proto(packet_base) :
     """
@@ -182,23 +78,6 @@ class LearningSwitch (object):
     # which switch port (keys are MACs, values are ports).
     self.mac_to_port = {}
 
-  def _handle_SwitchDescReceived(self, event) :
-    """
-    Handles port stats events
-    """
-    global start_time, receive_time_1, receive_time_2, send_time_1, send_time_2, src_dpid, dst_dpid, T1, T2
-    
-    #print("Handle timestamp %f" % receive_time)
-    if event.connection.dpid == dst_dpid :
-        receive_time_2 = time.time() * 1000
-        T2 = (receive_time_2 - send_time_2) / 2
-        print("Get the T2 RTT %f ms" % T2)
-
-    elif event.connection.dpid == src_dpid :
-        receive_time_1 = time.time() * 1000
-        T1 = (receive_time_1 - send_time_1) / 2
-        print("Get the T1 RTT %f ms" % T1)
-
   def resend_packet (self, packet_in, out_port):
     """
     Instructs the switch to resend a packet that it had sent to us.
@@ -215,7 +94,6 @@ class LearningSwitch (object):
 
     # Send message to switch
     self.connection.send(msg)
-
 
   def act_like_hub (self, packet, packet_in):
     """
@@ -308,7 +186,7 @@ class LearningSwitch (object):
       log.warning("Ignoring incomplete packet")
       return
 
-    if packet.type == PROBE_TYPE and event.connection.dpid == dst_dpid :
+    if packet.type == PROBE_TYPE :
         received_time = time.time() * 1000
         ts = packet.find("ethernet").payload
         ts, = struct.unpack("!d", ts)
@@ -331,7 +209,6 @@ def s2_timer_handler() :
     xid = of.generate_xid()
     core.openflow.getConnection(dst_dpid).send(of.ofp_barrier_request())
 
-
 def s1_timer_handler() :
     global start_time, send_time_1, send_time_2, src_dpid, dst_dpid, PROBE_TYPE
     send_time_1 = time.time() * 1000
@@ -339,7 +216,8 @@ def s1_timer_handler() :
     core.openflow.getConnection(src_dpid).send(of.ofp_barrier_request())
 
 
-def timer_handler() :
+def timer_handler(path_idx) :
+    global paths
     probe = probe_proto()
     probe.ts = time.time() * 1000
     eth = ethernet()
@@ -349,7 +227,7 @@ def timer_handler() :
     eth.set_payload(probe)
     msg = of.ofp_packet_out()
     msg.data = eth.pack()
-    msg.actions.append(of.ofp_action_output(port=2))
+    msg.actions.append(of.ofp_action_output(port=paths[path_idx][0][1]))
     core.openflow.getConnection(src_dpid).send(msg)
 
 
@@ -366,20 +244,46 @@ def probe_flowmod_msg(output_port) :
 def setup_probe_connectivity() :
     # Having the overall topology discovered
     # discover(start, end)
-    path = [(src_dpid, -1, 2), (dst_dpid, 2, of.OFPP_CONTROLLER)]
-    for sw, s, d in path :
-        fm = probe_flowmod_msg(d)
+    global paths
+    paths = get_paths(switches[1], switches[2])
+    print(paths)
+    for sw, d in paths[0] :
+        fm = probe_flowmod_msg(d) if d else probe_flowmod_msg(of.OFPP_CONTROLLER)
         core.openflow.getConnection(sw).send(fm)
-
-
-def test_get_paths():
-    sw1 = switches[1]
-    sw2 = switches[2]
-
-    get_paths(sw1, sw2)
-
-
+  
 def launch():
-    core.registerNew(TopoDiscoveryController)
+    """
+    Starts the component
+    """
+    def start_switch (event):
+        # Instance for each switch 
+        LearningSwitch(event.connection)
+        global probe_timer, src_dpid, dst_dpid, paths
+        log.debug("Controlling %s" % (event.connection,))
+        for p in event.connection.features.ports :
+            if p.name == "s1-eth2" :
+                src_dpid = event.connection.dpid
+            elif p.name == "s2-eth2" :
+                dst_dpid = event.connection.dpid
+        # When the two switch connection up, starting timer
+        log.debug(switches)
+        if len(switches) == 4 :
+            Timer(10, setup_probe_connectivity)
+            probe_timer = Timer(15, timer_handler, recurring = True, args=[0,])
+            probe_timer.start()
+            s1_timer = Timer(2, s1_timer_handler, recurring = True)
+            s1_timer.start()
+            s2_timer = Timer(2, s2_timer_handler, recurring = True)
+            s2_timer.start()
 
-    Timer(10, test_get_paths)
+    def stop_switch (event):
+        global probe_timer, src_dpid, dst_dpid
+        log.debug("Down %s" % (event.connection,))
+        probe_timer.cancel()
+        src_dpid = 0
+        dst_dpid = 0
+
+    core.registerNew(TopoDiscoveryController)
+    core.openflow.addListenerByName("ConnectionUp", start_switch)
+    core.openflow.addListenerByName("ConnectionDown", stop_switch)
+    #core.openflow.addListenerByName("PortStatsReceived", _handle_portstats_received)
