@@ -35,13 +35,13 @@ def get_paths_helper(pre, cur, dst, visited, path, paths):
 		log.info(path)
                 paths.append(path[:])
 	elif cur == dst:
-		get_paths_helper(cur, None, dst, visited, path)
+		get_paths_helper(cur, None, dst, visited, path, paths)
 	else:
 		for next_hop, port in adjacency[cur].iteritems():
 			if next_hop not in visited:
 				if port is None:
 					continue
-				get_paths_helper(cur, next_hop, dst, visited, path)
+				get_paths_helper(cur, next_hop, dst, visited, path, paths)
 
 	if path:
 		path.pop()
