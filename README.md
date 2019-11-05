@@ -1,2 +1,2 @@
 # LMPS
-OpenFlow and P4 based latency monitor and path selector
+OpenFlow and P4 based Latency Monitor and Path Selector
