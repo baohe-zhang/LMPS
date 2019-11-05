@@ -30,13 +30,13 @@ probe_timer = None
 src_dpid = 0
 dst_dpid = 0
 
-start_time = 0.0
-send_time_1 = 0.0
-send_time_2 = 0.0
-received_time_1 = 0.0
-received_time_2 = 0.0
-T1 = 0.0
-T2 = 0.0
+start_time = 0
+send_time_1 = 0
+send_time_2 = 0
+received_time_1 = 0
+received_time_2 = 0
+T1 = 0
+T2 = 0
 PROBE_TYPE = 0x8888
 ECHO_TYPE = 0x8889
 
@@ -155,24 +155,11 @@ class LearningSwitch (object):
         self.resend_packet(packet_in, of.OFPP_FLOOD)
         print("FLOODING")
 
-  def _handle_BarrierIn (self, event):
-    global start_time, receive_time_1, receive_time_2, send_time_1, send_time_2, src_dpid, dst_dpid, T1, T2
-
-    #print("Handle timestamp %f" % receive_time)
-    if event.connection.dpid == dst_dpid :
-        receive_time_2 = time.time() * 1000
-        T2 = (receive_time_2 - send_time_2) / 2
-        print("Get the T2 RTT %f ms" % T2)
-    elif event.connection.dpid == src_dpid :
-        receive_time_1 = time.time() * 1000
-        T1 = (receive_time_1 - send_time_1) / 2
-        print("Get the T1 RTT %f ms" % T1)
-
   def _handle_PacketIn (self, event):
     """
     Handles packet in messages from the switch.
     """
-    global src_dpid, dst_dpid, start_time, send_time_1, send_time_2, T1, T2, PROBE_TYPE, ECHO_TYPE
+    global src_dpid, dst_dpid, send_time_1, send_time_2, T1, T2, PROBE_TYPE, ECHO_TYPE
     rc = time.time() * 1000
     packet = event.parsed # This is the parsed packet data.
     if not packet.parsed:
@@ -183,7 +170,8 @@ class LearningSwitch (object):
         ts = packet.find("ethernet").payload
         ts, = struct.unpack("!d", ts)
         path_idx = str(packet.dst).split(':')[-1]
-        delay = rc - ts - T1 - T2
+        #delay = rc - ts - T1 - T2
+        delay = rc - ts
         print("Path [%s] delay from s1 to s2: %f ms" % (path_idx, delay))
         #print("T1 %f T2 %f" % (T1, T2))
         return
@@ -206,7 +194,6 @@ class LearningSwitch (object):
 
 def s2_timer_handler() :
     global send_time_2, dst_dpid, ECHO_TYPE
-    print("Send to S2:", send_time_2)
     eth = ethernet()
     eth.src = EthAddr("02:00:00:00:00:00")
     eth.dst = EthAddr("02:00:00:00:00:00")
@@ -219,7 +206,6 @@ def s2_timer_handler() :
 
 def s1_timer_handler() :
     global send_time_1, src_dpid, ECHO_TYPE
-    print("Send to S1:", send_time_1)
     eth = ethernet()
     eth.src = EthAddr("02:00:00:00:00:00")
     eth.dst = EthAddr("02:00:00:00:00:00")
@@ -230,16 +216,15 @@ def s1_timer_handler() :
     core.openflow.getConnection(src_dpid).send(msg)
     send_time_1 = time.time() * 1000
 
-
 def timer_handler() :
     global paths
     for path_idx in range(len(paths)) :
-        probe = probe_proto()
-        probe.ts = time.time() * 1000
         eth = ethernet()
         eth.src = EthAddr("06:12:3d:5d:ae:0c")
-        eth.dst = EthAddr("00:00:00:00:00:" + "%2d" % (path_idx + 1))
+        eth.dst = EthAddr("00:00:00:00:00:" + "%.2d" % (path_idx + 1))
         eth.type = PROBE_TYPE
+        probe = probe_proto()
+        probe.ts = time.time() * 1000
         eth.set_payload(probe)
         msg = of.ofp_packet_out()
         msg.data = eth.pack()
@@ -252,7 +237,7 @@ def probe_flowmod_msg(path_idx, output_port) :
     fm.idle_timeout = 0
     fm.hard_timeout = 0
     fm.match.dl_type = PROBE_TYPE
-    fm.match.dl_dst = EthAddr("00:00:00:00:00:" + "%2d" % (path_idx + 1))
+    fm.match.dl_dst = EthAddr("00:00:00:00:00:" + "%.2d" % (path_idx + 1))
     fm.actions.append(of.ofp_action_output(port=output_port))
     return fm
  
@@ -282,15 +267,15 @@ def launch():
                 src_dpid = event.connection.dpid
             elif p.name == "s2-eth2" :
                 dst_dpid = event.connection.dpid
-        # When the two switch connection up, starting timer
+        # When four switch connection up, starting timer
         log.debug(switches)
         if len(switches) == 4 :
             Timer(10, setup_probe_connectivity)
             probe_timer = Timer(15, timer_handler, recurring = True)
             probe_timer.start()
-            s1_timer = Timer(2, s1_timer_handler, recurring = True)
+            s1_timer = Timer(2, s2_timer_handler, recurring = True)
             s1_timer.start()
-            s2_timer = Timer(2, s2_timer_handler, recurring = True)
+            s2_timer = Timer(2, s1_timer_handler, recurring = True)
             s2_timer.start()
 
     def stop_switch (event):
