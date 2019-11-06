@@ -44,6 +44,7 @@ ECHO_TYPE = 0x8889
 
 paths = []
 paths_delay = []
+round_idx = 0
 
 class slide_window():
     def __init__(self, cap):
@@ -211,6 +212,10 @@ class LearningSwitch (object):
     #self.act_like_hub(packet, packet_in)
     self.act_like_switch(packet, packet_in)
 
+def lowest_latency_handler() :
+    global paths_delay, paths
+    min_path = min([i for i in range(len(paths_delay))], key = lambda x :paths_delay[x].avg())
+    print("BEST PATH: %.2d" % min_path, paths[min_path])
 
 def s2_timer_handler() :
     global send_time_2, dst_dpid, ECHO_TYPE
@@ -236,20 +241,21 @@ def s1_timer_handler() :
     core.openflow.getConnection(src_dpid).send(msg)
     send_time_1 = time.time() * 1000
 
+
 def timer_handler() :
-    global paths
-    for path_idx in range(len(paths)) :
-        eth = ethernet()
-        eth.src = EthAddr("06:12:3d:5d:ae:0c")
-        eth.dst = EthAddr("00:00:00:00:00:" + "%.2d" % (path_idx + 1))
-        eth.type = PROBE_TYPE
-        probe = probe_proto()
-        probe.ts = time.time() * 1000
-        eth.set_payload(probe)
-        msg = of.ofp_packet_out()
-        msg.data = eth.pack()
-        msg.actions.append(of.ofp_action_output(port=paths[path_idx][0][1]))
-        core.openflow.getConnection(src_dpid).send(msg)
+    global paths, round_idx
+    eth = ethernet()
+    eth.src = EthAddr("06:12:3d:5d:ae:0c")
+    eth.dst = EthAddr("00:00:00:00:00:" + "%.2d" % (round_idx + 1))
+    eth.type = PROBE_TYPE
+    probe = probe_proto()
+    probe.ts = time.time() * 1000
+    eth.set_payload(probe)
+    msg = of.ofp_packet_out()
+    msg.data = eth.pack()
+    msg.actions.append(of.ofp_action_output(port=paths[round_idx][0][1]))
+    core.openflow.getConnection(src_dpid).send(msg)
+    round_idx = (round_idx + 1) % len(paths)
 
 
 def probe_flowmod_msg(path_idx, output_port) :
@@ -291,13 +297,15 @@ def launch():
         # When four switch connection up, starting timer
         log.debug(switches)
         if len(switches) == 4 :
-            Timer(15, setup_probe_connectivity)
-            probe_timer = Timer(15, timer_handler, recurring = True)
+            Timer(10, setup_probe_connectivity)
+            probe_timer = Timer(11, timer_handler, recurring = True)
             probe_timer.start()
             s1_timer = Timer(2, s2_timer_handler, recurring = True)
             s1_timer.start()
             s2_timer = Timer(2, s1_timer_handler, recurring = True)
             s2_timer.start()
+            latency_timer = Timer(30, lowest_latency_handler, recurring = True)
+            latency_timer.start()
 
     def stop_switch (event):
         global probe_timer, src_dpid, dst_dpid
