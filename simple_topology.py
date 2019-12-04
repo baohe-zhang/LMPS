@@ -20,11 +20,26 @@ class SimpleTopo(Topo):
 		switch2 = self.addSwitch('s2')
 		host2 = self.addHost('h2')
 
+		switch3 = self.addSwitch('s3')
+		host3 = self.addHost('h3')
+
+		switch4 = self.addSwitch('s4')
+		host4 = self.addHost('h4')
+
 		self.addLink(switch1, host1)
 		self.addLink(switch2, host2)
+		self.addLink(switch3, host3)
+		self.addLink(switch4, host4)
 
-		# 30ms delay
-		self.addLink(switch1, switch2, delay='30ms')
+		self.addLink(switch1, switch3)
+		self.addLink(switch1, switch4)
+
+		self.addLink(switch2, switch3)
+		self.addLink(switch2, switch4)
+
+
+		# # 30ms delay
+		# self.addLink(switch1, switch2, delay='30ms')
 
 
 def main():
