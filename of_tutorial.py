@@ -217,7 +217,6 @@ class LearningSwitch (object):
     self.act_like_switch(packet, packet_in)
 
 
-
 def s2_timer_handler() :
     global start_time, send_time_1, send_time_2, src_dpid, dst_dpid, PROBE_TYPE
     send_time_2 = time.time() * 1000
@@ -263,6 +262,7 @@ def setup_probe_connectivity() :
     for sw, s, d in path :
         fm = probe_flowmod_msg(d)
         core.openflow.getConnection(sw).send(fm)
+
   
 def launch ():
     """
