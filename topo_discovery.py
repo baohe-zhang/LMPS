@@ -22,15 +22,18 @@ adjacency = defaultdict(lambda: defaultdict(lambda: None))
 def get_paths(src, dst):
 	visited = set()
 	path = []
-	get_paths_helper(None, src, dst, visited, path)
+        paths = []
+	get_paths_helper(None, src, dst, visited, path, paths)
+        return paths
 
-def get_paths_helper(pre, cur, dst, visited, path):
+def get_paths_helper(pre, cur, dst, visited, path, paths):
 	visited.add(cur)
 	if pre is not None:
 		path.append((pre.dpid, adjacency[pre][cur]))
 
 	if cur == None:
 		log.info(path)
+                paths.append(path[:])
 	elif cur == dst:
 		get_paths_helper(cur, None, dst, visited, path)
 	else:
@@ -43,7 +46,6 @@ def get_paths_helper(pre, cur, dst, visited, path):
 	if path:
 		path.pop()
 	visited.remove(cur)
-
 
 
 class Switch(EventMixin):
