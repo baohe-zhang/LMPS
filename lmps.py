@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import time, struct
-import Queue as queue
+import Queue
 import pox.openflow.libopenflow_01 as of
 from pox.core import core
 from pox.lib.util import dpidToStr
@@ -47,7 +47,7 @@ paths_delay = []
 class slide_window():
     def __init__(self, cap):
         self.cap = cap
-        self.q = queue()
+        self.q = Queue.Queue()
         self.total = 0
 
     def avg(self):
