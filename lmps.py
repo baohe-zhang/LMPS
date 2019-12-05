@@ -52,7 +52,7 @@ class slide_window():
         self.total = 0
 
     def avg(self):
-        return self.total / (self.q.size())
+        return self.total / (self.q.qsize())
 
     def add(self, time):
         self.q.put(time)
@@ -191,6 +191,7 @@ class LearningSwitch (object):
         path_idx = str(packet.dst).split(':')[-1]
         delay = rc - ts - T1 - T2
         idx = int(path_idx)
+        print("Current path index is %d" %idx)
         paths_delay[idx].add(delay)
         print("Path [%s] delay from s1 to s2: %f ms" % (path_idx, paths_delay[idx].avg()))
         #print("T1 %f T2 %f" % (T1, T2))
