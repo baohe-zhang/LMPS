@@ -56,7 +56,7 @@ class slide_window():
     def add(self, time):
         self.q.put(time)
         self.total += time
-        if(self.q.size() > self.cap):
+        if(self.q.qsize() > self.cap):
             self.total -= self.q.get()
         return 
 
