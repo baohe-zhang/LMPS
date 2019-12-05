@@ -202,9 +202,7 @@ class LearningSwitch (object):
         ts, = struct.unpack("!d", ts)
         path_idx = str(packet.dst).split(':')[-1]
         delay = rc - ts - T1 - T2
-        idx = int(path_idx)
-        print("Current path index is %d" %idx)
-        print("Current list size is %d" %len(paths_delay))
+        idx = int(path_idx) - 1
         paths_delay[idx].add(delay)
         print("Path [%s] delay from s1 to s2: %f ms" % (path_idx, paths_delay[idx].avg()))
         #print("T1 %f T2 %f" % (T1, T2))
