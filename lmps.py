@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pox.core import core
+import time, struct
 import pox.openflow.libopenflow_01 as of
+from pox.core import core
 from pox.lib.util import dpidToStr
 from pox.lib.recoco import Timer
-import time, struct
 from pox.lib.packet.packet_base import packet_base
 from pox.lib.packet.packet_utils import *
 from pox.lib.packet import ethernet
@@ -38,6 +38,7 @@ received_time_2 = 0.0
 T1 = 0.0
 T2 = 0.0
 PROBE_TYPE = 0x8888
+ECHO_TYPE = 0x8889
 
 paths = []
 
@@ -171,20 +172,28 @@ class LearningSwitch (object):
     """
     Handles packet in messages from the switch.
     """
-    global start_time, T1, T2, PROBE_TYPE, dst_dpid
+    global src_dpid, dst_dpid, start_time, send_time_1, send_time_2, T1, T2, PROBE_TYPE, ECHO_TYPE
+    rc = time.time() * 1000
     packet = event.parsed # This is the parsed packet data.
     if not packet.parsed:
       log.warning("Ignoring incomplete packet")
       return
 
     if packet.type == PROBE_TYPE :
-        received_time = time.time() * 1000
         ts = packet.find("ethernet").payload
         ts, = struct.unpack("!d", ts)
         path_idx = str(packet.dst).split(':')[-1]
-        delay = received_time - ts - T1 - T2
+        delay = rc - ts - T1 - T2
         print("Path [%s] delay from s1 to s2: %f ms" % (path_idx, delay))
         #print("T1 %f T2 %f" % (T1, T2))
+        return
+    elif packet.type == ECHO_TYPE :
+        if event.connection.dpid == dst_dpid :
+            T2 = (rc - send_time_2) / 2
+            print("Get the T2 RTT %f ms" % T2)
+        elif event.connection.dpid == src_dpid :
+            T1 = (rc - send_time_1) / 2
+            print("Get the T1 RTT %f ms" % T1)
         return
 
     packet_in = event.ofp # The actual ofp_packet_in message.
@@ -196,11 +205,17 @@ class LearningSwitch (object):
 
 
 def s2_timer_handler() :
-    global start_time, send_time_1, send_time_2, src_dpid, dst_dpid, PROBE_TYPE
-    send_time_2 = time.time() * 1000
+    global send_time_2, dst_dpid, ECHO_TYPE
     print("Send to S2:", send_time_2)
-    xid = of.generate_xid()
-    core.openflow.getConnection(dst_dpid).send(of.ofp_barrier_request())
+    eth = ethernet()
+    eth.src = EthAddr("02:00:00:00:00:00")
+    eth.dst = EthAddr("02:00:00:00:00:00")
+    eth.type = ECHO_TYPE
+    msg = of.ofp_packet_out()
+    msg.data = eth.pack()
+    msg.actions.append(of.ofp_action_output(port=of.OFPP_CONTROLLER))
+    core.openflow.getConnection(dst_dpid).send(msg)
+    send_time_2 = time.time() * 1000
 
 def s1_timer_handler() :
     global start_time, send_time_1, send_time_2, src_dpid, dst_dpid, PROBE_TYPE
