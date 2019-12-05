@@ -22,6 +22,7 @@ from pox.lib.packet.packet_utils import *
 from pox.lib.packet import ethernet
 from pox.lib.addresses import IPAddr, EthAddr
 from pox.misc.topo_discovery import switches, TopoDiscoveryController, get_paths
+from multiprocessing import Process
 
 log = core.getLogger()
 
@@ -193,43 +194,53 @@ class LearningSwitch (object):
 
 
 def s2_timer_handler() :
+    time.sleep(25)
     global send_time_2, dst_dpid, ECHO_TYPE
-    eth = ethernet()
-    eth.src = EthAddr("02:00:00:00:00:00")
-    eth.dst = EthAddr("02:00:00:00:00:00")
-    eth.type = ECHO_TYPE
-    msg = of.ofp_packet_out()
-    msg.data = eth.pack()
-    msg.actions.append(of.ofp_action_output(port=of.OFPP_CONTROLLER))
-    core.openflow.getConnection(dst_dpid).send(msg)
-    send_time_2 = time.time() * 1000
-
-def s1_timer_handler() :
-    global send_time_1, src_dpid, ECHO_TYPE
-    eth = ethernet()
-    eth.src = EthAddr("02:00:00:00:00:00")
-    eth.dst = EthAddr("02:00:00:00:00:00")
-    eth.type = ECHO_TYPE
-    msg = of.ofp_packet_out()
-    msg.data = eth.pack()
-    msg.actions.append(of.ofp_action_output(port=of.OFPP_CONTROLLER))
-    core.openflow.getConnection(src_dpid).send(msg)
-    send_time_1 = time.time() * 1000
-
-def timer_handler() :
-    global paths
-    for path_idx in range(len(paths)) :
+    while True :
         eth = ethernet()
-        eth.src = EthAddr("06:12:3d:5d:ae:0c")
-        eth.dst = EthAddr("00:00:00:00:00:" + "%.2d" % (path_idx + 1))
-        eth.type = PROBE_TYPE
-        probe = probe_proto()
-        probe.ts = time.time() * 1000
-        eth.set_payload(probe)
+        eth.src = EthAddr("02:00:00:00:00:00")
+        eth.dst = EthAddr("02:00:00:00:00:00")
+        eth.type = ECHO_TYPE
         msg = of.ofp_packet_out()
         msg.data = eth.pack()
-        msg.actions.append(of.ofp_action_output(port=paths[path_idx][0][1]))
+        msg.actions.append(of.ofp_action_output(port=of.OFPP_CONTROLLER))
+        core.openflow.getConnection(dst_dpid).send(msg)
+        send_time_2 = time.time() * 1000
+        time.sleep(4)
+
+def s1_timer_handler() :
+    time.sleep(26)
+    global send_time_1, src_dpid, ECHO_TYPE
+    while True :
+        eth = ethernet()
+        eth.src = EthAddr("02:00:00:00:00:00")
+        eth.dst = EthAddr("02:00:00:00:00:00")
+        eth.type = ECHO_TYPE
+        msg = of.ofp_packet_out()
+        msg.data = eth.pack()
+        msg.actions.append(of.ofp_action_output(port=of.OFPP_CONTROLLER))
         core.openflow.getConnection(src_dpid).send(msg)
+        send_time_1 = time.time() * 1000
+        time.sleep(4)
+
+def timer_handler() :
+    time.sleep(20)
+    global paths
+    while True :
+        for path_idx in range(len(paths)) :
+            eth = ethernet()
+            eth.src = EthAddr("06:12:3d:5d:ae:0c")
+            eth.dst = EthAddr("00:00:00:00:00:" + "%.2d" % (path_idx + 1))
+            eth.type = PROBE_TYPE
+            probe = probe_proto()
+            probe.ts = time.time() * 1000
+            eth.set_payload(probe)
+            msg = of.ofp_packet_out()
+            msg.data = eth.pack()
+            msg.actions.append(of.ofp_action_output(port=paths[path_idx][0][1]))
+            core.openflow.getConnection(src_dpid).send(msg)
+            time.sleep(0.5)
+        time.sleep(15)
 
 
 def probe_flowmod_msg(path_idx, output_port) :
@@ -270,7 +281,7 @@ def launch():
         # When four switch connection up, starting timer
         log.debug(switches)
         if len(switches) == 4 :
-            Timer(10, setup_probe_connectivity)
+            Timer(15, setup_probe_connectivity)
             probe_timer = Timer(15, timer_handler, recurring = True)
             probe_timer.start()
             s1_timer = Timer(2, s2_timer_handler, recurring = True)
@@ -281,7 +292,6 @@ def launch():
     def stop_switch (event):
         global probe_timer, src_dpid, dst_dpid
         log.debug("Down %s" % (event.connection,))
-        probe_timer.cancel()
         src_dpid = 0
         dst_dpid = 0
 
@@ -289,3 +299,16 @@ def launch():
     core.openflow.addListenerByName("ConnectionUp", start_switch)
     core.openflow.addListenerByName("ConnectionDown", stop_switch)
     #core.openflow.addListenerByName("PortStatsReceived", _handle_portstats_received)
+
+    probe_timer = Process(target = timer_handler)
+    s1_timer = Process(target = s1_timer_handler)
+    s2_timer = Process(target = s2_timer_handler)
+
+    probe_timer.start()
+    s1_timer.start()
+    s2_timer.start()
+
+    probe_timer.join()
+    s1_timer.join()
+    s2_timer.join()
+
