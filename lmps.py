@@ -211,7 +211,7 @@ def s1_timer_handler() :
 
 def timer_handler() :
     global paths
-    for path_idx in len(paths) :
+    for path_idx in range(len(paths)) :
         probe = probe_proto()
         probe.ts = time.time() * 1000
         eth = ethernet()
@@ -241,7 +241,7 @@ def setup_probe_connectivity() :
     global paths
     paths = get_paths(switches[1], switches[2])
     log.info("Path:", paths)
-    for idx in len(paths) :
+    for idx in range(len(paths)) :
         for sw, port in paths[idx] :
             fm = probe_flowmod_msg(idx, port) if port else probe_flowmod_msg(idx, of.OFPP_CONTROLLER)
             core.openflow.getConnection(sw).send(fm)
