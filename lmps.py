@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import time, struct
+import Queue
 import pox.openflow.libopenflow_01 as of
 from pox.core import core
 from pox.lib.util import dpidToStr
@@ -22,6 +23,7 @@ from pox.lib.packet.packet_utils import *
 from pox.lib.packet import ethernet
 from pox.lib.addresses import IPAddr, EthAddr
 from pox.misc.topo_discovery import switches, TopoDiscoveryController, get_paths
+from multiprocessing import Process
 
 log = core.getLogger()
 
@@ -30,17 +32,35 @@ probe_timer = None
 src_dpid = 0
 dst_dpid = 0
 
-start_time = 0.0
-send_time_1 = 0.0
-send_time_2 = 0.0
-received_time_1 = 0.0
-received_time_2 = 0.0
-T1 = 0.0
-T2 = 0.0
+start_time = 0
+send_time_1 = 0
+send_time_2 = 0
+received_time_1 = 0
+received_time_2 = 0
+T1 = 0
+T2 = 0
 PROBE_TYPE = 0x8888
 ECHO_TYPE = 0x8889
 
 paths = []
+paths_delay = []
+round_idx = 0
+
+class slide_window():
+    def __init__(self, cap):
+        self.cap = cap
+        self.q = Queue.Queue()
+        self.total = 0
+
+    def avg(self):
+        return self.total / (self.q.qsize())
+
+    def add(self, time):
+        self.q.put(time)
+        self.total += time
+        if(self.q.qsize() > self.cap):
+            self.total -= self.q.get()
+        return 
 
 class probe_proto(packet_base) :
     """
@@ -155,24 +175,11 @@ class LearningSwitch (object):
         self.resend_packet(packet_in, of.OFPP_FLOOD)
         print("FLOODING")
 
-  def _handle_BarrierIn (self, event):
-    global start_time, receive_time_1, receive_time_2, send_time_1, send_time_2, src_dpid, dst_dpid, T1, T2
-
-    #print("Handle timestamp %f" % receive_time)
-    if event.connection.dpid == dst_dpid :
-        receive_time_2 = time.time() * 1000
-        T2 = (receive_time_2 - send_time_2) / 2
-        print("Get the T2 RTT %f ms" % T2)
-    elif event.connection.dpid == src_dpid :
-        receive_time_1 = time.time() * 1000
-        T1 = (receive_time_1 - send_time_1) / 2
-        print("Get the T1 RTT %f ms" % T1)
-
   def _handle_PacketIn (self, event):
     """
     Handles packet in messages from the switch.
     """
-    global src_dpid, dst_dpid, start_time, send_time_1, send_time_2, T1, T2, PROBE_TYPE, ECHO_TYPE
+    global src_dpid, dst_dpid, send_time_1, send_time_2, T1, T2, PROBE_TYPE, ECHO_TYPE
     rc = time.time() * 1000
     packet = event.parsed # This is the parsed packet data.
     if not packet.parsed:
@@ -184,7 +191,9 @@ class LearningSwitch (object):
         ts, = struct.unpack("!d", ts)
         path_idx = str(packet.dst).split(':')[-1]
         delay = rc - ts - T1 - T2
-        print("Path [%s] delay from s1 to s2: %f ms" % (path_idx, delay))
+        idx = int(path_idx) - 1
+        paths_delay[idx].add(delay)
+        print("Path [%s] delay from s1 to s2: %f ms" % (path_idx, paths_delay[idx].avg()))
         #print("T1 %f T2 %f" % (T1, T2))
         return
     elif packet.type == ECHO_TYPE :
@@ -203,10 +212,13 @@ class LearningSwitch (object):
     #self.act_like_hub(packet, packet_in)
     self.act_like_switch(packet, packet_in)
 
+def lowest_latency_handler() :
+    global paths_delay, paths
+    min_path = min([i for i in range(len(paths_delay))], key = lambda x :paths_delay[x].avg())
+    print("BEST PATH: %.2d" % min_path, paths[min_path])
 
 def s2_timer_handler() :
     global send_time_2, dst_dpid, ECHO_TYPE
-    print("Send to S2:", send_time_2)
     eth = ethernet()
     eth.src = EthAddr("02:00:00:00:00:00")
     eth.dst = EthAddr("02:00:00:00:00:00")
@@ -219,7 +231,6 @@ def s2_timer_handler() :
 
 def s1_timer_handler() :
     global send_time_1, src_dpid, ECHO_TYPE
-    print("Send to S1:", send_time_1)
     eth = ethernet()
     eth.src = EthAddr("02:00:00:00:00:00")
     eth.dst = EthAddr("02:00:00:00:00:00")
@@ -232,19 +243,19 @@ def s1_timer_handler() :
 
 
 def timer_handler() :
-    global paths
-    for path_idx in range(len(paths)) :
-        probe = probe_proto()
-        probe.ts = time.time() * 1000
-        eth = ethernet()
-        eth.src = EthAddr("06:12:3d:5d:ae:0c")
-        eth.dst = EthAddr("00:00:00:00:00:" + "%2d" % (path_idx + 1))
-        eth.type = PROBE_TYPE
-        eth.set_payload(probe)
-        msg = of.ofp_packet_out()
-        msg.data = eth.pack()
-        msg.actions.append(of.ofp_action_output(port=paths[path_idx][0][1]))
-        core.openflow.getConnection(src_dpid).send(msg)
+    global paths, round_idx
+    eth = ethernet()
+    eth.src = EthAddr("06:12:3d:5d:ae:0c")
+    eth.dst = EthAddr("00:00:00:00:00:" + "%.2d" % (round_idx + 1))
+    eth.type = PROBE_TYPE
+    probe = probe_proto()
+    probe.ts = time.time() * 1000
+    eth.set_payload(probe)
+    msg = of.ofp_packet_out()
+    msg.data = eth.pack()
+    msg.actions.append(of.ofp_action_output(port=paths[round_idx][0][1]))
+    core.openflow.getConnection(src_dpid).send(msg)
+    round_idx = (round_idx + 1) % len(paths)
 
 
 def probe_flowmod_msg(path_idx, output_port) :
@@ -252,7 +263,7 @@ def probe_flowmod_msg(path_idx, output_port) :
     fm.idle_timeout = 0
     fm.hard_timeout = 0
     fm.match.dl_type = PROBE_TYPE
-    fm.match.dl_dst = EthAddr("00:00:00:00:00:" + "%2d" % (path_idx + 1))
+    fm.match.dl_dst = EthAddr("00:00:00:00:00:" + "%.2d" % (path_idx + 1))
     fm.actions.append(of.ofp_action_output(port=output_port))
     return fm
  
@@ -260,8 +271,9 @@ def probe_flowmod_msg(path_idx, output_port) :
 def setup_probe_connectivity() :
     # Having the overall topology discovered
     # discover(start, end)
-    global paths
+    global paths, paths_delay
     paths = get_paths(switches[1], switches[2])
+    paths_delay = [slide_window(4) for _ in paths]
     print("Path:", paths)
     for idx in range(len(paths)) :
         for sw, port in paths[idx] :
@@ -282,21 +294,22 @@ def launch():
                 src_dpid = event.connection.dpid
             elif p.name == "s2-eth2" :
                 dst_dpid = event.connection.dpid
-        # When the two switch connection up, starting timer
+        # When four switch connection up, starting timer
         log.debug(switches)
         if len(switches) == 4 :
             Timer(10, setup_probe_connectivity)
-            probe_timer = Timer(15, timer_handler, recurring = True)
+            probe_timer = Timer(11, timer_handler, recurring = True)
             probe_timer.start()
-            s1_timer = Timer(2, s1_timer_handler, recurring = True)
+            s1_timer = Timer(2, s2_timer_handler, recurring = True)
             s1_timer.start()
-            s2_timer = Timer(2, s2_timer_handler, recurring = True)
+            s2_timer = Timer(2, s1_timer_handler, recurring = True)
             s2_timer.start()
+            latency_timer = Timer(30, lowest_latency_handler, recurring = True)
+            latency_timer.start()
 
     def stop_switch (event):
         global probe_timer, src_dpid, dst_dpid
         log.debug("Down %s" % (event.connection,))
-        probe_timer.cancel()
         src_dpid = 0
         dst_dpid = 0
 
@@ -304,3 +317,4 @@ def launch():
     core.openflow.addListenerByName("ConnectionUp", start_switch)
     core.openflow.addListenerByName("ConnectionDown", stop_switch)
     #core.openflow.addListenerByName("PortStatsReceived", _handle_portstats_received)
+

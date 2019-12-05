@@ -12,24 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-This component is for use with the OpenFlow tutorial.
-
-It acts as a simple hub, but can be modified to act like an L2
-learning switch.
-
-It's roughly similar to the one Brandon Heller did for NOX.
-"""
-
-from pox.core import core
+import time, struct
 import pox.openflow.libopenflow_01 as of
+from pox.core import core
 from pox.lib.util import dpidToStr
 from pox.lib.recoco import Timer
-import time, struct
 from pox.lib.packet.packet_base import packet_base
 from pox.lib.packet.packet_utils import *
 from pox.lib.packet import ethernet
 from pox.lib.addresses import IPAddr, EthAddr
+from pox.misc.topo_discovery import switches, TopoDiscoveryController, get_paths
+from threading import Thread
 
 log = core.getLogger()
 
@@ -38,14 +31,17 @@ probe_timer = None
 src_dpid = 0
 dst_dpid = 0
 
-start_time = 0.0
-send_time_1 = 0.0
-send_time_2 = 0.0
-received_time_1 = 0.0
-received_time_2 = 0.0
-T1 = 0.0
-T2 = 0.0
+start_time = 0
+send_time_1 = 0
+send_time_2 = 0
+received_time_1 = 0
+received_time_2 = 0
+T1 = 0
+T2 = 0
 PROBE_TYPE = 0x8888
+ECHO_TYPE = 0x8889
+
+paths = []
 
 class probe_proto(packet_base) :
     """
@@ -75,23 +71,6 @@ class LearningSwitch (object):
     # which switch port (keys are MACs, values are ports).
     self.mac_to_port = {}
 
-  def _handle_SwitchDescReceived(self, event) :
-    """
-    Handles port stats events
-    """
-    global start_time, receive_time_1, receive_time_2, send_time_1, send_time_2, src_dpid, dst_dpid, T1, T2
-    
-    #print("Handle timestamp %f" % receive_time)
-    if event.connection.dpid == dst_dpid :
-        receive_time_2 = time.time() * 1000
-        T2 = (receive_time_2 - send_time_2) / 2
-        print("Get the T2 RTT %f ms" % T2)
-
-    elif event.connection.dpid == src_dpid :
-        receive_time_1 = time.time() * 1000
-        T1 = (receive_time_1 - send_time_1) / 2
-        print("Get the T1 RTT %f ms" % T1)
-
   def resend_packet (self, packet_in, out_port):
     """
     Instructs the switch to resend a packet that it had sent to us.
@@ -108,7 +87,6 @@ class LearningSwitch (object):
 
     # Send message to switch
     self.connection.send(msg)
-
 
   def act_like_hub (self, packet, packet_in):
     """
@@ -178,35 +156,33 @@ class LearningSwitch (object):
         self.resend_packet(packet_in, of.OFPP_FLOOD)
         print("FLOODING")
 
-  def _handle_BarrierIn (self, event):
-    global start_time, receive_time_1, receive_time_2, send_time_1, send_time_2, src_dpid, dst_dpid, T1, T2
-
-    #print("Handle timestamp %f" % receive_time)
-    if event.connection.dpid == dst_dpid :
-        receive_time_2 = time.time() * 1000
-        T2 = (receive_time_2 - send_time_2) / 2
-        print("Get the T2 RTT %f ms" % T2)
-    elif event.connection.dpid == src_dpid :
-        receive_time_1 = time.time() * 1000
-        T1 = (receive_time_1 - send_time_1) / 2
-        print("Get the T1 RTT %f ms" % T1)
-
   def _handle_PacketIn (self, event):
     """
     Handles packet in messages from the switch.
     """
-    global start_time, T1, T2, PROBE_TYPE, dst_dpid
+    global src_dpid, dst_dpid, send_time_1, send_time_2, T1, T2, PROBE_TYPE, ECHO_TYPE
+    rc = time.time() * 1000
     packet = event.parsed # This is the parsed packet data.
     if not packet.parsed:
       log.warning("Ignoring incomplete packet")
       return
 
-    if packet.type == PROBE_TYPE and event.connection.dpid == dst_dpid :
-        received_time = time.time() * 1000
+    if packet.type == PROBE_TYPE :
         ts = packet.find("ethernet").payload
         ts, = struct.unpack("!d", ts)
-        print("Curent delay from s1 to s2: %f ms" % (received_time - ts - T1 - T2))
+        path_idx = str(packet.dst).split(':')[-1]
+        #delay = rc - ts - T1 - T2
+        delay = rc - ts
+        print("Path [%s] delay from s1 to s2: %f ms" % (path_idx, delay))
         #print("T1 %f T2 %f" % (T1, T2))
+        return
+    elif packet.type == ECHO_TYPE :
+        if event.connection.dpid == dst_dpid :
+            T2 = (rc - send_time_2) / 2
+            print("Get the T2 RTT %f ms" % T2)
+        elif event.connection.dpid == src_dpid :
+            T1 = (rc - send_time_1) / 2
+            print("Get the T1 RTT %f ms" % T1)
         return
 
     packet_in = event.ofp # The actual ofp_packet_in message.
@@ -218,39 +194,61 @@ class LearningSwitch (object):
 
 
 def s2_timer_handler() :
-    global start_time, send_time_1, send_time_2, src_dpid, dst_dpid, PROBE_TYPE
-    send_time_2 = time.time() * 1000
-    print("Send to S2:", send_time_2)
-    xid = of.generate_xid()
-    core.openflow.getConnection(dst_dpid).send(of.ofp_barrier_request())
+    time.sleep(14)
+    global send_time_2, dst_dpid, ECHO_TYPE
+    while True :
+        eth = ethernet()
+        eth.src = EthAddr("02:00:00:00:00:00")
+        eth.dst = EthAddr("02:00:00:00:00:00")
+        eth.type = ECHO_TYPE
+        msg = of.ofp_packet_out()
+        msg.data = eth.pack()
+        msg.actions.append(of.ofp_action_output(port=of.OFPP_CONTROLLER))
+        core.openflow.getConnection(dst_dpid).send(msg)
+        send_time_2 = time.time() * 1000
+        time.sleep(4)
 
 def s1_timer_handler() :
-    global start_time, send_time_1, send_time_2, src_dpid, dst_dpid, PROBE_TYPE
-    send_time_1 = time.time() * 1000
-    print("Send to S1:", send_time_1)
-    core.openflow.getConnection(src_dpid).send(of.ofp_barrier_request())
-
+    time.sleep(15)
+    global send_time_1, src_dpid, ECHO_TYPE
+    while True :
+        eth = ethernet()
+        eth.src = EthAddr("02:00:00:00:00:00")
+        eth.dst = EthAddr("02:00:00:00:00:00")
+        eth.type = ECHO_TYPE
+        msg = of.ofp_packet_out()
+        msg.data = eth.pack()
+        msg.actions.append(of.ofp_action_output(port=of.OFPP_CONTROLLER))
+        core.openflow.getConnection(src_dpid).send(msg)
+        send_time_1 = time.time() * 1000
+        time.sleep(4)
 
 def timer_handler() :
-    probe = probe_proto()
-    probe.ts = time.time() * 1000
-    eth = ethernet()
-    eth.src = EthAddr("06:12:3d:5d:ae:0c")
-    eth.dst = EthAddr("11:11:11:11:11:11")
-    eth.type = PROBE_TYPE
-    eth.set_payload(probe)
-    msg = of.ofp_packet_out()
-    msg.data = eth.pack()
-    msg.actions.append(of.ofp_action_output(port=2))
-    core.openflow.getConnection(src_dpid).send(msg)
+    time.sleep(10)
+    global paths
+    while True :
+        for path_idx in range(len(paths)) :
+            eth = ethernet()
+            eth.src = EthAddr("06:12:3d:5d:ae:0c")
+            eth.dst = EthAddr("00:00:00:00:00:" + "%.2d" % (path_idx + 1))
+            eth.type = PROBE_TYPE
+            probe = probe_proto()
+            probe.ts = time.time() * 1000
+            eth.set_payload(probe)
+            msg = of.ofp_packet_out()
+            msg.data = eth.pack()
+            msg.actions.append(of.ofp_action_output(port=paths[path_idx][0][1]))
+            core.openflow.getConnection(src_dpid).send(msg)
+            time.sleep(0.5)
+        time.sleep(10)
 
 
-def probe_flowmod_msg(output_port) :
+def probe_flowmod_msg(path_idx, output_port) :
     fm = of.ofp_flow_mod()
     fm.idle_timeout = 0
     fm.hard_timeout = 0
     fm.match.dl_type = PROBE_TYPE
-    fm.match.dl_dst = EthAddr("11:11:11:11:11:11")
+    fm.match.dl_dst = EthAddr("00:00:00:00:00:" + "%.2d" % (path_idx + 1))
     fm.actions.append(of.ofp_action_output(port=output_port))
     return fm
  
@@ -258,46 +256,56 @@ def probe_flowmod_msg(output_port) :
 def setup_probe_connectivity() :
     # Having the overall topology discovered
     # discover(start, end)
-    path = [(src_dpid, -1, 2), (dst_dpid, 2, of.OFPP_CONTROLLER)]
-    for sw, s, d in path :
-        fm = probe_flowmod_msg(d)
-        core.openflow.getConnection(sw).send(fm)
-
+    global paths
+    paths = get_paths(switches[1], switches[2])
+    print("Path:", paths)
+    for idx in range(len(paths)) :
+        for sw, port in paths[idx] :
+            fm = probe_flowmod_msg(idx, port) if port else probe_flowmod_msg(idx, of.OFPP_CONTROLLER)
+            core.openflow.getConnection(sw).send(fm)
   
-def launch ():
+def launch():
     """
     Starts the component
     """
     def start_switch (event):
         # Instance for each switch 
         LearningSwitch(event.connection)
-        global probe_timer, src_dpid, dst_dpid
+        global probe_timer, src_dpid, dst_dpid, paths
         log.debug("Controlling %s" % (event.connection,))
         for p in event.connection.features.ports :
             if p.name == "s1-eth2" :
                 src_dpid = event.connection.dpid
             elif p.name == "s2-eth2" :
                 dst_dpid = event.connection.dpid
-        # When the two switch connection up, starting timer
-        if src_dpid != 0 and dst_dpid != 0 :
-            setup_probe_connectivity()
-            time.sleep(2)
-            probe_timer = Timer(1, timer_handler, recurring = True)
+        # When four switch connection up, starting timer
+        log.debug(switches)
+        if len(switches) == 4 :
+            Timer(15, setup_probe_connectivity)
+
+            probe_timer = Thread(target = timer_handler)
+            s1_timer = Thread(target = s1_timer_handler)
+            s2_timer = Thread(target = s2_timer_handler)
             probe_timer.start()
-            time.sleep(2)
-            s1_timer = Timer(0.25, s1_timer_handler, recurring = True)
             s1_timer.start()
-            time.sleep(2)
-            s2_timer = Timer(0.25, s2_timer_handler, recurring = True)
             s2_timer.start()
+
+            # probe_timer = Timer(15, timer_handler, recurring = True)
+            # probe_timer.start()
+            # s1_timer = Timer(2, s2_timer_handler, recurring = True)
+            # s1_timer.start()
+            # s2_timer = Timer(2, s1_timer_handler, recurring = True)
+            # s2_timer.start()
 
     def stop_switch (event):
         global probe_timer, src_dpid, dst_dpid
         log.debug("Down %s" % (event.connection,))
-        probe_timer.cancel()
         src_dpid = 0
         dst_dpid = 0
 
+    core.registerNew(TopoDiscoveryController)
     core.openflow.addListenerByName("ConnectionUp", start_switch)
     core.openflow.addListenerByName("ConnectionDown", stop_switch)
     #core.openflow.addListenerByName("PortStatsReceived", _handle_portstats_received)
+
+
