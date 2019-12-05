@@ -1,11 +1,14 @@
 import time
 from collections import defaultdict
 
+import pox.openflow.libopenflow_01 as of
+
 from pox.core import core
 from pox.lib.revent import *
 from pox.lib.recoco import Timer
 from pox.lib.util import dpid_to_str
 from pox.openflow.discovery import Discovery
+from pox.lib.addresses import EthAddr
 
 log = core.getLogger()
 
@@ -47,6 +50,55 @@ def get_paths_helper(pre, cur, dst, visited, path, paths):
 		path.pop()
 	visited.remove(cur)
 
+def fm_msg(dl_src, dl_dst, output_port):
+	# Flow Mod
+	fm = of.ofp_flow_mod()
+	fm.idle_timeout = 0
+	fm.hard_timeout = 0
+	fm.match.dl_src = EthAddr(dl_src)
+	fm.match.dl_dst = EthAddr(dl_dst)
+	fm.actions.append(of.ofp_action_output(port=output_port))
+
+	return fm
+
+def setup_path(path):
+	log.info('Handle setup path')
+
+	src_dpid = path[0]
+	dst_dpid = path[-1]
+
+	dl_src = '20:00:00:00:00:0%d' % src_dpid
+	dl_dst = '20:00:00:00:00:0%d' % dst_dpid
+
+	# forward
+	for idx in range(len(path)):
+		port = None
+
+		if idx + 1 < len(path):
+			sw1 = switches[path[idx]]
+			sw2 = switches[path[idx + 1]]
+			port = adjacency[sw1][sw2]
+		else:
+			port = 1
+
+		fm = fm_msg(dl_src, dl_dst, port)
+		switches[path[idx]].connection.send(fm)
+
+	# backward
+	path = path[::-1]
+	for idx in range(len(path)):
+		port = None
+
+		if idx + 1 < len(path):
+			sw1 = switches[path[idx]]
+			sw2 = switches[path[idx + 1]]
+			port = adjacency[sw1][sw2]
+		else:
+			port = 1
+
+		fm = fm_msg(dl_dst, dl_src, port)
+		switches[path[idx]].connection.send(fm)
+
 
 class Switch(EventMixin):
 	def __init__(self):
@@ -81,10 +133,6 @@ class Switch(EventMixin):
 
 	def _handle_ConnectionDown(self, event):
 		self.disconnect()
-
-	def _handle_PacketIn(self, event):
-		packet = event.parsed
-		print(dir(packet))
 
 
 class TopoDiscoveryController(EventMixin):
@@ -133,5 +181,3 @@ def test_get_paths():
 
 def launch():
 	core.registerNew(TopoDiscoveryController)
-
-	Timer(10, test_get_paths)

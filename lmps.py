@@ -22,7 +22,7 @@ from pox.lib.packet.packet_base import packet_base
 from pox.lib.packet.packet_utils import *
 from pox.lib.packet import ethernet
 from pox.lib.addresses import IPAddr, EthAddr
-from pox.misc.topo_discovery import switches, TopoDiscoveryController, get_paths
+from pox.misc.topo_discovery import switches, TopoDiscoveryController, get_paths, setup_path
 from multiprocessing import Process
 
 log = core.getLogger()
@@ -217,6 +217,10 @@ def lowest_latency_handler() :
     min_path = min([i for i in range(len(paths_delay))], key = lambda x :paths_delay[x].avg())
     print("BEST PATH: %.2d" % min_path, paths[min_path])
 
+    best_path = paths[min_path]
+    sw_path = [hop[0] for hop in best_path]
+    setup_path(sw_path)
+
 def s2_timer_handler() :
     global send_time_2, dst_dpid, ECHO_TYPE
     eth = ethernet()
@@ -279,7 +283,8 @@ def setup_probe_connectivity() :
         for sw, port in paths[idx] :
             fm = probe_flowmod_msg(idx, port) if port else probe_flowmod_msg(idx, of.OFPP_CONTROLLER)
             core.openflow.getConnection(sw).send(fm)
-  
+
+
 def launch():
     """
     Starts the component
@@ -299,13 +304,13 @@ def launch():
         if len(switches) == 4 :
             Timer(10, setup_probe_connectivity)
             probe_timer = Timer(11, timer_handler, recurring = True)
-            probe_timer.start()
+            # probe_timer.start()
             s1_timer = Timer(2, s2_timer_handler, recurring = True)
-            s1_timer.start()
+            # s1_timer.start()
             s2_timer = Timer(2, s1_timer_handler, recurring = True)
-            s2_timer.start()
+            # s2_timer.start()
             latency_timer = Timer(30, lowest_latency_handler, recurring = True)
-            latency_timer.start()
+            # latency_timer.start()
 
     def stop_switch (event):
         global probe_timer, src_dpid, dst_dpid
@@ -316,5 +321,3 @@ def launch():
     core.registerNew(TopoDiscoveryController)
     core.openflow.addListenerByName("ConnectionUp", start_switch)
     core.openflow.addListenerByName("ConnectionDown", stop_switch)
-    #core.openflow.addListenerByName("PortStatsReceived", _handle_portstats_received)
-
