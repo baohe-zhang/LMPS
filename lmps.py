@@ -204,6 +204,7 @@ class LearningSwitch (object):
         delay = rc - ts - T1 - T2
         idx = int(path_idx)
         print("Current path index is %d" %idx)
+        print("Current list size is %d" %len(paths_delay))
         paths_delay[idx].add(delay)
         print("Path [%s] delay from s1 to s2: %f ms" % (path_idx, paths_delay[idx].avg()))
         #print("T1 %f T2 %f" % (T1, T2))
@@ -283,7 +284,7 @@ def setup_probe_connectivity() :
     # discover(start, end)
     global paths, paths_delay
     paths = get_paths(switches[1], switches[2])
-    paths_delay = [slide_window(4) for i in range(len(paths))]
+    paths_delay = [slide_window(4) for _ in paths]
     print("Path:", paths)
     for idx in range(len(paths)) :
         for sw, port in paths[idx] :
