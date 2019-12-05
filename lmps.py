@@ -47,7 +47,7 @@ paths_delay = []
 class slide_window():
     def __init__(self, cap):
         self.cap = cap
-        self.q = Queue()
+        self.q = queue()
         self.total = 0
 
     def avg(self):
@@ -202,8 +202,9 @@ class LearningSwitch (object):
         ts, = struct.unpack("!d", ts)
         path_idx = str(packet.dst).split(':')[-1]
         delay = rc - ts - T1 - T2
-        paths_delay[path_idx].add(delay)
-        print("Path [%s] delay from s1 to s2: %f ms" % (path_idx, paths_delay[path_idx].avg()))
+        idx = int(path_idx)
+        paths_delay[idx].add(delay)
+        print("Path [%s] delay from s1 to s2: %f ms" % (path_idx, paths_delay[idx].avg()))
         #print("T1 %f T2 %f" % (T1, T2))
         return
     elif packet.type == ECHO_TYPE :
