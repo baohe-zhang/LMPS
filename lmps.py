@@ -218,10 +218,17 @@ def s2_timer_handler() :
     send_time_2 = time.time() * 1000
 
 def s1_timer_handler() :
-    global start_time, send_time_1, send_time_2, src_dpid, dst_dpid, PROBE_TYPE
-    send_time_1 = time.time() * 1000
+    global send_time_1, src_dpid, ECHO_TYPE
     print("Send to S1:", send_time_1)
-    core.openflow.getConnection(src_dpid).send(of.ofp_barrier_request())
+    eth = ethernet()
+    eth.src = EthAddr("02:00:00:00:00:00")
+    eth.dst = EthAddr("02:00:00:00:00:00")
+    eth.type = ECHO_TYPE
+    msg = of.ofp_packet_out()
+    msg.data = eth.pack()
+    msg.actions.append(of.ofp_action_output(port=of.OFPP_CONTROLLER))
+    core.openflow.getConnection(src_dpid).send(msg)
+    send_time_1 = time.time() * 1000
 
 
 def timer_handler() :
