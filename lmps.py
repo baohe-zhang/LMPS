@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import time, struct
+import Queue as queue
 import pox.openflow.libopenflow_01 as of
 from pox.core import core
 from pox.lib.util import dpidToStr
@@ -41,6 +42,23 @@ PROBE_TYPE = 0x8888
 ECHO_TYPE = 0x8889
 
 paths = []
+paths_delay = []
+
+class slide_window():
+    def __init__(self, cap):
+        self.cap = cap
+        self.q = Queue()
+        self.total = 0
+
+    def avg(self):
+        return self.total / (self.q.size())
+
+    def add(self, time):
+        self.q.put(time)
+        self.total += time
+        if(self.q.size() > self.cap):
+            self.total -= self.q.get()
+        return 
 
 class probe_proto(packet_base) :
     """
@@ -172,7 +190,7 @@ class LearningSwitch (object):
     """
     Handles packet in messages from the switch.
     """
-    global src_dpid, dst_dpid, start_time, send_time_1, send_time_2, T1, T2, PROBE_TYPE, ECHO_TYPE
+    global src_dpid, dst_dpid, start_time, send_time_1, send_time_2, T1, T2, PROBE_TYPE, ECHO_TYPE, paths_delay
     rc = time.time() * 1000
     packet = event.parsed # This is the parsed packet data.
     if not packet.parsed:
@@ -184,7 +202,8 @@ class LearningSwitch (object):
         ts, = struct.unpack("!d", ts)
         path_idx = str(packet.dst).split(':')[-1]
         delay = rc - ts - T1 - T2
-        print("Path [%s] delay from s1 to s2: %f ms" % (path_idx, delay))
+        paths_delay[path_idx].add(delay)
+        print("Path [%s] delay from s1 to s2: %f ms" % (path_idx, paths_delay[path_idx].avg()))
         #print("T1 %f T2 %f" % (T1, T2))
         return
     elif packet.type == ECHO_TYPE :
@@ -260,8 +279,9 @@ def probe_flowmod_msg(path_idx, output_port) :
 def setup_probe_connectivity() :
     # Having the overall topology discovered
     # discover(start, end)
-    global paths
+    global paths, paths_delay
     paths = get_paths(switches[1], switches[2])
+    paths_delay = [slide_window(4) for i in range(len(paths))]
     print("Path:", paths)
     for idx in range(len(paths)) :
         for sw, port in paths[idx] :
