@@ -213,53 +213,43 @@ class LearningSwitch (object):
 
 
 def s2_timer_handler() :
-    time.sleep(25)
     global send_time_2, dst_dpid, ECHO_TYPE
-    while True :
-        eth = ethernet()
-        eth.src = EthAddr("02:00:00:00:00:00")
-        eth.dst = EthAddr("02:00:00:00:00:00")
-        eth.type = ECHO_TYPE
-        msg = of.ofp_packet_out()
-        msg.data = eth.pack()
-        msg.actions.append(of.ofp_action_output(port=of.OFPP_CONTROLLER))
-        core.openflow.getConnection(dst_dpid).send(msg)
-        send_time_2 = time.time() * 1000
-        time.sleep(4)
+    eth = ethernet()
+    eth.src = EthAddr("02:00:00:00:00:00")
+    eth.dst = EthAddr("02:00:00:00:00:00")
+    eth.type = ECHO_TYPE
+    msg = of.ofp_packet_out()
+    msg.data = eth.pack()
+    msg.actions.append(of.ofp_action_output(port=of.OFPP_CONTROLLER))
+    core.openflow.getConnection(dst_dpid).send(msg)
+    send_time_2 = time.time() * 1000
 
 def s1_timer_handler() :
-    time.sleep(26)
     global send_time_1, src_dpid, ECHO_TYPE
-    while True :
-        eth = ethernet()
-        eth.src = EthAddr("02:00:00:00:00:00")
-        eth.dst = EthAddr("02:00:00:00:00:00")
-        eth.type = ECHO_TYPE
-        msg = of.ofp_packet_out()
-        msg.data = eth.pack()
-        msg.actions.append(of.ofp_action_output(port=of.OFPP_CONTROLLER))
-        core.openflow.getConnection(src_dpid).send(msg)
-        send_time_1 = time.time() * 1000
-        time.sleep(4)
+    eth = ethernet()
+    eth.src = EthAddr("02:00:00:00:00:00")
+    eth.dst = EthAddr("02:00:00:00:00:00")
+    eth.type = ECHO_TYPE
+    msg = of.ofp_packet_out()
+    msg.data = eth.pack()
+    msg.actions.append(of.ofp_action_output(port=of.OFPP_CONTROLLER))
+    core.openflow.getConnection(src_dpid).send(msg)
+    send_time_1 = time.time() * 1000
 
 def timer_handler() :
-    time.sleep(20)
     global paths
-    while True :
-        for path_idx in range(len(paths)) :
-            eth = ethernet()
-            eth.src = EthAddr("06:12:3d:5d:ae:0c")
-            eth.dst = EthAddr("00:00:00:00:00:" + "%.2d" % (path_idx + 1))
-            eth.type = PROBE_TYPE
-            probe = probe_proto()
-            probe.ts = time.time() * 1000
-            eth.set_payload(probe)
-            msg = of.ofp_packet_out()
-            msg.data = eth.pack()
-            msg.actions.append(of.ofp_action_output(port=paths[path_idx][0][1]))
-            core.openflow.getConnection(src_dpid).send(msg)
-            time.sleep(0.5)
-        time.sleep(15)
+    for path_idx in range(len(paths)) :
+        eth = ethernet()
+        eth.src = EthAddr("06:12:3d:5d:ae:0c")
+        eth.dst = EthAddr("00:00:00:00:00:" + "%.2d" % (path_idx + 1))
+        eth.type = PROBE_TYPE
+        probe = probe_proto()
+        probe.ts = time.time() * 1000
+        eth.set_payload(probe)
+        msg = of.ofp_packet_out()
+        msg.data = eth.pack()
+        msg.actions.append(of.ofp_action_output(port=paths[path_idx][0][1]))
+        core.openflow.getConnection(src_dpid).send(msg)
 
 
 def probe_flowmod_msg(path_idx, output_port) :
@@ -319,16 +309,4 @@ def launch():
     core.openflow.addListenerByName("ConnectionUp", start_switch)
     core.openflow.addListenerByName("ConnectionDown", stop_switch)
     #core.openflow.addListenerByName("PortStatsReceived", _handle_portstats_received)
-
-    probe_timer = Process(target = timer_handler)
-    s1_timer = Process(target = s1_timer_handler)
-    s2_timer = Process(target = s2_timer_handler)
-
-    probe_timer.start()
-    s1_timer.start()
-    s2_timer.start()
-
-    probe_timer.join()
-    s1_timer.join()
-    s2_timer.join()
 
