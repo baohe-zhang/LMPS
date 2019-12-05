@@ -12,15 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-This component is for use with the OpenFlow tutorial.
-
-It acts as a simple hub, but can be modified to act like an L2
-learning switch.
-
-It's roughly similar to the one Brandon Heller did for NOX.
-"""
-
 from pox.core import core
 import pox.openflow.libopenflow_01 as of
 from pox.lib.util import dpidToStr
@@ -190,7 +181,9 @@ class LearningSwitch (object):
         received_time = time.time() * 1000
         ts = packet.find("ethernet").payload
         ts, = struct.unpack("!d", ts)
-        print("Curent delay from s1 to s2: %f ms" % (received_time - ts - T1 - T2))
+        path_idx = str(packet.dst).split(':')[-1]
+        delay = received_time - ts - T1 - T2
+        print("Path [%s] delay from s1 to s2: %f ms" % (path_idx, delay))
         #print("T1 %f T2 %f" % (T1, T2))
         return
 
@@ -216,27 +209,28 @@ def s1_timer_handler() :
     core.openflow.getConnection(src_dpid).send(of.ofp_barrier_request())
 
 
-def timer_handler(path_idx) :
+def timer_handler() :
     global paths
-    probe = probe_proto()
-    probe.ts = time.time() * 1000
-    eth = ethernet()
-    eth.src = EthAddr("06:12:3d:5d:ae:0c")
-    eth.dst = EthAddr("11:11:11:11:11:11")
-    eth.type = PROBE_TYPE
-    eth.set_payload(probe)
-    msg = of.ofp_packet_out()
-    msg.data = eth.pack()
-    msg.actions.append(of.ofp_action_output(port=paths[path_idx][0][1]))
-    core.openflow.getConnection(src_dpid).send(msg)
+    for path_idx in len(paths) :
+        probe = probe_proto()
+        probe.ts = time.time() * 1000
+        eth = ethernet()
+        eth.src = EthAddr("06:12:3d:5d:ae:0c")
+        eth.dst = EthAddr("00:00:00:00:00:" + "%2d" % (path_idx + 1))
+        eth.type = PROBE_TYPE
+        eth.set_payload(probe)
+        msg = of.ofp_packet_out()
+        msg.data = eth.pack()
+        msg.actions.append(of.ofp_action_output(port=paths[path_idx][0][1]))
+        core.openflow.getConnection(src_dpid).send(msg)
 
 
-def probe_flowmod_msg(output_port) :
+def probe_flowmod_msg(path_idx, output_port) :
     fm = of.ofp_flow_mod()
     fm.idle_timeout = 0
     fm.hard_timeout = 0
     fm.match.dl_type = PROBE_TYPE
-    fm.match.dl_dst = EthAddr("11:11:11:11:11:11")
+    fm.match.dl_dst = EthAddr("00:00:00:00:00:" + "%2d" % (path_idx + 1))
     fm.actions.append(of.ofp_action_output(port=output_port))
     return fm
  
@@ -246,10 +240,11 @@ def setup_probe_connectivity() :
     # discover(start, end)
     global paths
     paths = get_paths(switches[1], switches[2])
-    print(paths)
-    for sw, d in paths[0] :
-        fm = probe_flowmod_msg(d) if d else probe_flowmod_msg(of.OFPP_CONTROLLER)
-        core.openflow.getConnection(sw).send(fm)
+    log.info("Path:", paths)
+    for idx in len(paths) :
+        for sw, port in paths[idx] :
+            fm = probe_flowmod_msg(idx, port) if port else probe_flowmod_msg(idx, of.OFPP_CONTROLLER)
+            core.openflow.getConnection(sw).send(fm)
   
 def launch():
     """
@@ -269,7 +264,7 @@ def launch():
         log.debug(switches)
         if len(switches) == 4 :
             Timer(10, setup_probe_connectivity)
-            probe_timer = Timer(15, timer_handler, recurring = True, args=[0,])
+            probe_timer = Timer(15, timer_handler, recurring = True)
             probe_timer.start()
             s1_timer = Timer(2, s1_timer_handler, recurring = True)
             s1_timer.start()
