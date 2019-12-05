@@ -80,7 +80,9 @@ class Switch(EventMixin):
 	def _handle_ConnectionDown(self, event):
 		self.disconnect()
 
-
+	def _handle_PacketIn(self, event):
+		packet = event.parsed
+		print(dir(packet))
 
 
 class TopoDiscoveryController(EventMixin):
